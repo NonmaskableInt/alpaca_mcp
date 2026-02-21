@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -1530,17 +1531,15 @@ class AlpacaMCPServer:
 
 def main():
     """Main entry point for the Alpaca MCP server."""
-    import os
-    import sys
-    
-    # Check if we should use SSE transport (when called with --sse or MCP_TRANSPORT=sse)
-    transport = "stdio"  # Default to stdio for compatibility
-    
-    if "--sse" in sys.argv or os.getenv("MCP_TRANSPORT") == "sse":
+    # MCP_TRANSPORT env var sets the transport type (stdio, sse, streamable-http)
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+
+    # Command-line flags override the env var
+    if "--sse" in sys.argv:
         transport = "sse"
-    elif "--streamable" in sys.argv or os.getenv("MCP_TRANSPORT") == "streamable":
+    elif "--streamable-http" in sys.argv or "--streamable" in sys.argv:
         transport = "streamable-http"
-    
+
     server = AlpacaMCPServer()
     server.app.run(transport=transport)
 
