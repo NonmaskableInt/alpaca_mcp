@@ -158,8 +158,18 @@ class AlpacaMCPServer:
         )
         self.data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
 
+        # Determine host from MCP_HOST env variable, default to "0.0.0.0"
+        mcp_host = os.getenv("MCP_HOST", "0.0.0.0")
+
         # Initialize MCP server
-        self.app = FastMCP("alpaca-trading", debug=True, json_response=True, port=8001, log_level="DEBUG")
+        self.app = FastMCP(
+            "alpaca-trading",
+            debug=True,
+            json_response=True,
+            host=mcp_host,
+            port=8001,
+            log_level="DEBUG"
+        )
         self._register_tools()
 
     def _register_tools(self):
