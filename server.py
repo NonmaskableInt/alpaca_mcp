@@ -1,9 +1,12 @@
 """Alpaca MCP Server implementation."""
 
+import json
 import logging
 import os
 import sys
-from datetime import datetime
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 # Configure logging
@@ -41,6 +44,7 @@ from mcp.server.fastmcp import FastMCP
 
 from shared.types import (
     AccountInfo,
+    NewsArticle,
     Position,
     Order,
     QuoteData,
@@ -48,6 +52,7 @@ from shared.types import (
     OptionContract,
     OptionPosition,
     ContractType,
+    TechnicalIndicatorResult,
     MCPResponse,
     AccountResponse,
     PositionsResponse,
@@ -55,6 +60,8 @@ from shared.types import (
     OrderResponse,
     QuotesResponse,
     BarsResponse,
+    NewsResponse,
+    TechnicalIndicatorResponse,
     OptionContractsResponse,
     OptionPositionsResponse,
 )
@@ -152,6 +159,8 @@ class AlpacaMCPServer:
         if not self.api_key or not self.secret_key:
             raise ValueError("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set")
 
+        self.alphavantage_api_key = os.getenv("ALPHAVANTAGE_API_KEY")
+
         # Initialize clients
         self.trading_client = TradingClient(
             self.api_key, self.secret_key, paper=self.paper
@@ -171,6 +180,22 @@ class AlpacaMCPServer:
             log_level="DEBUG"
         )
         self._register_tools()
+
+    def _alphavantage_request(self, params: dict) -> dict:
+        """Make a request to the AlphaVantage API."""
+        if not self.alphavantage_api_key:
+            raise ValueError("ALPHAVANTAGE_API_KEY environment variable not set")
+        params["apikey"] = self.alphavantage_api_key
+        url = "https://www.alphavantage.co/query?" + urllib.parse.urlencode(params)
+        with urllib.request.urlopen(url) as response:
+            data = json.loads(response.read().decode())
+        if "Error Message" in data:
+            raise ValueError(data["Error Message"])
+        if "Note" in data:
+            raise ValueError(f"AlphaVantage rate limit reached: {data['Note']}")
+        if "Information" in data:
+            raise ValueError(f"AlphaVantage: {data['Information']}")
+        return data
 
     def _register_tools(self):
         """Register all MCP tools."""
@@ -1538,6 +1563,240 @@ class AlpacaMCPServer:
                 )
             except Exception as e:
                 return MCPResponse(success=False, error=str(e))
+
+        @self.app.tool()
+        async def get_technical_indicators(
+            symbol: str,
+            indicator: str = "RSI",
+            time_period: int = 14,
+            timeframe: str = "1Day",
+        ) -> TechnicalIndicatorResponse:
+            """Get technical indicators for a stock symbol via AlphaVantage.
+
+            Args:
+                symbol: Stock symbol (e.g., NVDA)
+                indicator: Technical indicator name (RSI, MACD, SMA, EMA, BBANDS, STOCH, ADX, WILLR)
+                time_period: Lookback period for the indicator (default: 14)
+                timeframe: Time frame (1Min, 5Min, 15Min, 30Min, 1Hour, 1Day, 1Week, 1Month)
+            """
+            try:
+                interval_map = {
+                    "1Min": "1min",
+                    "5Min": "5min",
+                    "15Min": "15min",
+                    "30Min": "30min",
+                    "1Hour": "60min",
+                    "1Day": "daily",
+                    "1Week": "weekly",
+                    "1Month": "monthly",
+                }
+                interval = interval_map.get(timeframe, "daily")
+
+                params = {
+                    "function": indicator.upper(),
+                    "symbol": symbol.upper(),
+                    "interval": interval,
+                    "time_period": str(time_period),
+                    "series_type": "close",
+                }
+
+                data = self._alphavantage_request(params)
+
+                analysis_key = f"Technical Analysis: {indicator.upper()}"
+                if analysis_key not in data:
+                    return TechnicalIndicatorResponse(
+                        success=False,
+                        error=f"No data returned for indicator {indicator.upper()}",
+                    )
+
+                results = []
+                for timestamp_str, values in list(data[analysis_key].items())[:20]:
+                    try:
+                        if " " in timestamp_str:
+                            ts = datetime.fromisoformat(timestamp_str)
+                        else:
+                            ts = datetime.strptime(timestamp_str, "%Y-%m-%d").replace(
+                                tzinfo=timezone.utc
+                            )
+                    except ValueError:
+                        continue
+
+                    results.append(
+                        TechnicalIndicatorResult(
+                            indicator=indicator.upper(),
+                            symbol=symbol.upper(),
+                            timestamp=ts,
+                            values={k: float(v) for k, v in values.items()},
+                        )
+                    )
+
+                return TechnicalIndicatorResponse(success=True, data=results)
+            except Exception as e:
+                logger.error(f"Failed to get technical indicators: {e}")
+                return TechnicalIndicatorResponse(success=False, error=str(e))
+
+        @self.app.tool()
+        async def get_daily_prices(
+            symbol: str,
+            outputsize: str = "compact",
+        ) -> BarsResponse:
+            """Get daily OHLCV price history for a stock symbol via AlphaVantage.
+
+            Args:
+                symbol: Stock symbol (e.g., NVDA)
+                outputsize: compact (latest 100 data points) or full (20+ years of history)
+            """
+            try:
+                params = {
+                    "function": "TIME_SERIES_DAILY",
+                    "symbol": symbol.upper(),
+                    "outputsize": outputsize,
+                }
+
+                data = self._alphavantage_request(params)
+
+                time_series_key = "Time Series (Daily)"
+                if time_series_key not in data:
+                    return BarsResponse(success=False, error="No daily price data found")
+
+                bars = []
+                for timestamp_str, ohlcv in data[time_series_key].items():
+                    ts = datetime.strptime(timestamp_str, "%Y-%m-%d").replace(
+                        tzinfo=timezone.utc
+                    )
+                    bars.append(
+                        BarData(
+                            symbol=symbol.upper(),
+                            timestamp=ts,
+                            open=float(ohlcv["1. open"]),
+                            high=float(ohlcv["2. high"]),
+                            low=float(ohlcv["3. low"]),
+                            close=float(ohlcv["4. close"]),
+                            volume=int(float(ohlcv["5. volume"])),
+                        )
+                    )
+
+                return BarsResponse(success=True, data=bars)
+            except Exception as e:
+                logger.error(f"Failed to get daily prices: {e}")
+                return BarsResponse(success=False, error=str(e))
+
+        @self.app.tool()
+        async def get_intraday_prices(
+            symbol: str,
+            timeframe: str = "5Min",
+            outputsize: str = "compact",
+        ) -> BarsResponse:
+            """Get intraday OHLCV price data for a stock symbol via AlphaVantage.
+
+            Args:
+                symbol: Stock symbol (e.g., NVDA)
+                timeframe: Intraday interval (1Min, 5Min, 15Min, 30Min, 1Hour)
+                outputsize: compact (latest 100 data points) or full
+            """
+            try:
+                interval_map = {
+                    "1Min": "1min",
+                    "5Min": "5min",
+                    "15Min": "15min",
+                    "30Min": "30min",
+                    "1Hour": "60min",
+                }
+                interval = interval_map.get(timeframe, "5min")
+
+                params = {
+                    "function": "TIME_SERIES_INTRADAY",
+                    "symbol": symbol.upper(),
+                    "interval": interval,
+                    "outputsize": outputsize,
+                }
+
+                data = self._alphavantage_request(params)
+
+                time_series_key = f"Time Series ({interval})"
+                if time_series_key not in data:
+                    return BarsResponse(
+                        success=False,
+                        error=f"No intraday data found for interval {interval}",
+                    )
+
+                bars = []
+                for timestamp_str, ohlcv in data[time_series_key].items():
+                    ts = datetime.fromisoformat(timestamp_str)
+                    bars.append(
+                        BarData(
+                            symbol=symbol.upper(),
+                            timestamp=ts,
+                            open=float(ohlcv["1. open"]),
+                            high=float(ohlcv["2. high"]),
+                            low=float(ohlcv["3. low"]),
+                            close=float(ohlcv["4. close"]),
+                            volume=int(float(ohlcv["5. volume"])),
+                        )
+                    )
+
+                return BarsResponse(success=True, data=bars)
+            except Exception as e:
+                logger.error(f"Failed to get intraday prices: {e}")
+                return BarsResponse(success=False, error=str(e))
+
+        @self.app.tool()
+        async def get_market_news(
+            tickers: Optional[List[str]] = None,
+            limit: int = 10,
+        ) -> NewsResponse:
+            """Get market news and sentiment for stocks via AlphaVantage.
+
+            Args:
+                tickers: List of stock symbols to filter news (e.g., ["NVDA", "AAPL"])
+                limit: Maximum number of articles to return (default: 10, max: 50)
+            """
+            try:
+                params: Dict[str, str] = {
+                    "function": "NEWS_SENTIMENT",
+                    "limit": str(min(limit, 50)),
+                }
+                if tickers:
+                    params["tickers"] = ",".join(t.upper() for t in tickers)
+
+                data = self._alphavantage_request(params)
+
+                if "feed" not in data:
+                    return NewsResponse(success=True, data=[])
+
+                articles = []
+                for item in data["feed"]:
+                    time_str = item.get("time_published", "")
+                    try:
+                        ts = datetime.strptime(time_str, "%Y%m%dT%H%M%S").replace(
+                            tzinfo=timezone.utc
+                        )
+                    except ValueError:
+                        ts = datetime.now(timezone.utc)
+
+                    topics = [t.get("topic", "") for t in item.get("topics", [])]
+                    mentioned_tickers = [
+                        t.get("ticker", "") for t in item.get("ticker_sentiment", [])
+                    ]
+
+                    articles.append(
+                        NewsArticle(
+                            title=item.get("title", ""),
+                            url=item.get("url", ""),
+                            time_published=ts,
+                            summary=item.get("summary"),
+                            source=item.get("source"),
+                            sentiment_score=item.get("overall_sentiment_score"),
+                            sentiment_label=item.get("overall_sentiment_label"),
+                            topics=topics if topics else None,
+                            tickers=mentioned_tickers if mentioned_tickers else None,
+                        )
+                    )
+
+                return NewsResponse(success=True, data=articles)
+            except Exception as e:
+                logger.error(f"Failed to get market news: {e}")
+                return NewsResponse(success=False, error=str(e))
 
 def main():
     """Main entry point for the Alpaca MCP server."""

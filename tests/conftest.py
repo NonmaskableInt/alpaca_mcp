@@ -15,6 +15,7 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("ALPACA_API_KEY", "test_api_key")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "test_secret_key")
     monkeypatch.setenv("ALPACA_PAPER", "true")
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "test_av_key")
 
 
 @pytest.fixture
@@ -204,6 +205,105 @@ def mock_data_client(mock_quote, mock_bar):
     client.get_stock_bars.return_value = bars_response
 
     return client
+
+
+@pytest.fixture
+def mock_alphavantage_rsi_data():
+    """Mock RSI response from AlphaVantage."""
+    return {
+        "Meta Data": {
+            "1: Symbol": "NVDA",
+            "2: Indicator": "Relative Strength Index (RSI)",
+        },
+        "Technical Analysis: RSI": {
+            "2024-01-19": {"RSI": "65.5234"},
+            "2024-01-18": {"RSI": "62.1234"},
+        },
+    }
+
+
+@pytest.fixture
+def mock_alphavantage_daily_data():
+    """Mock daily price response from AlphaVantage."""
+    return {
+        "Meta Data": {
+            "1. Information": "Daily Prices (open, high, low, close) and Volumes",
+            "2. Symbol": "NVDA",
+        },
+        "Time Series (Daily)": {
+            "2024-01-19": {
+                "1. open": "470.0",
+                "2. high": "490.0",
+                "3. low": "465.0",
+                "4. close": "485.0",
+                "5. volume": "50000000",
+            },
+            "2024-01-18": {
+                "1. open": "460.0",
+                "2. high": "475.0",
+                "3. low": "458.0",
+                "4. close": "470.0",
+                "5. volume": "45000000",
+            },
+        },
+    }
+
+
+@pytest.fixture
+def mock_alphavantage_intraday_data():
+    """Mock intraday price response from AlphaVantage."""
+    return {
+        "Meta Data": {
+            "1. Information": "Intraday (5min) open, high, low, close prices and volume",
+            "2. Symbol": "NVDA",
+        },
+        "Time Series (5min)": {
+            "2024-01-19 15:55:00": {
+                "1. open": "470.0",
+                "2. high": "471.0",
+                "3. low": "469.0",
+                "4. close": "470.5",
+                "5. volume": "100000",
+            },
+            "2024-01-19 15:50:00": {
+                "1. open": "469.0",
+                "2. high": "470.5",
+                "3. low": "468.5",
+                "4. close": "470.0",
+                "5. volume": "95000",
+            },
+        },
+    }
+
+
+@pytest.fixture
+def mock_alphavantage_news_data():
+    """Mock news sentiment response from AlphaVantage."""
+    return {
+        "items": "1",
+        "sentiment_score_definition": "x <= -0.35: Bearish",
+        "relevance_score_definition": "0 < x <= 1",
+        "feed": [
+            {
+                "title": "NVIDIA Reports Record Earnings",
+                "url": "https://example.com/nvda-earnings",
+                "time_published": "20240119T150000",
+                "summary": "NVIDIA reports record quarterly earnings driven by AI demand.",
+                "source": "Reuters",
+                "overall_sentiment_score": 0.65,
+                "overall_sentiment_label": "Bullish",
+                "topics": [{"topic": "Technology", "relevance_score": "0.8"}],
+                "ticker_sentiment": [
+                    {
+                        "ticker": "NVDA",
+                        "relevance_score": "0.9",
+                        "ticker_sentiment_score": "0.6",
+                        "ticker_sentiment_label": "Bullish",
+                    }
+                ],
+            }
+        ],
+    }
 
 
 @pytest.fixture
