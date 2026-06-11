@@ -598,3 +598,37 @@ class TestInputValidation:
 
         assert result.success is False
         assert "greater than 0" in result.error
+
+
+class TestReplaceOrder:
+    """Tests for replace_order (atomic stop/price modification)."""
+
+    async def test_replace_order_stop_price(self, server, mock_trading_client, mock_order):
+        mock_order.stop_price = "170.00"
+        mock_order.limit_price = None
+        mock_order.qty = "10"
+        mock_order.status = MagicMock(value="accepted")
+        mock_trading_client.replace_order_by_id.return_value = mock_order
+
+        replace_order = server.app._tool_manager._tools["replace_order"].fn
+        result = await replace_order(order_id="ord-abc", stop_price=170.0)
+
+        assert result.success is True
+        mock_trading_client.replace_order_by_id.assert_called_once()
+        args, _ = mock_trading_client.replace_order_by_id.call_args
+        assert args[0] == "ord-abc"
+        assert args[1].stop_price == 170.0
+        assert result.data["stop_price"] == 170.0
+
+    async def test_replace_order_requires_at_least_one_field(self, server, mock_trading_client):
+        replace_order = server.app._tool_manager._tools["replace_order"].fn
+        result = await replace_order(order_id="ord-abc")
+        assert result.success is False
+        mock_trading_client.replace_order_by_id.assert_not_called()
+
+    async def test_replace_order_surfaces_api_error(self, server, mock_trading_client):
+        mock_trading_client.replace_order_by_id.side_effect = Exception("422 cannot replace")
+        replace_order = server.app._tool_manager._tools["replace_order"].fn
+        result = await replace_order(order_id="ord-abc", stop_price=170.0)
+        assert result.success is False
+        assert "cannot replace" in result.error

@@ -24,6 +24,7 @@ from alpaca.trading.requests import (
     StopOrderRequest,
     StopLimitOrderRequest,
     TrailingStopOrderRequest,
+    ReplaceOrderRequest,
     GetOrdersRequest,
     GetPortfolioHistoryRequest,
     GetOptionContractsRequest,
@@ -926,6 +927,52 @@ class AlpacaMCPServer:
                 )
             except Exception as e:
                 logger.error(f"Failed to cancel order {order_id}: {e}")
+                return MCPResponse(success=False, error=str(e))
+
+        @self.app.tool()
+        async def replace_order(
+            order_id: str,
+            stop_price: float | None = None,
+            limit_price: float | None = None,
+            qty: float | None = None,
+        ) -> MCPResponse:
+            """Replace (modify in place) an existing order's price/qty. Atomic on
+            Alpaca -- the replacement is accepted before the old order is retired,
+            so there is no moment without protection. Used to RAISE a protective
+            stop leg without cancelling the OCO. Pass only the fields to change;
+            None leaves a field unchanged.
+
+            Args:
+                order_id: ID of the order (e.g. an OCO stop leg) to replace
+                stop_price: new stop trigger price (for stop / stop-limit legs)
+                limit_price: new limit price (for limit / take-profit legs)
+                qty: new quantity
+            """
+            if stop_price is None and limit_price is None and qty is None:
+                return MCPResponse(
+                    success=False,
+                    error="replace_order: provide at least one of stop_price/limit_price/qty",
+                )
+            try:
+                req = ReplaceOrderRequest(
+                    stop_price=stop_price,
+                    limit_price=limit_price,
+                    qty=int(qty) if qty is not None else None,
+                )
+                order = self.trading_client.replace_order_by_id(order_id, req)
+                logger.info(f"Order replaced: {order_id} -> {order.id}")
+                return MCPResponse(
+                    success=True,
+                    data={
+                        "order_id": str(order.id),
+                        "status": order.status.value,
+                        "stop_price": float(order.stop_price) if order.stop_price is not None else None,
+                        "limit_price": float(order.limit_price) if order.limit_price is not None else None,
+                        "qty": float(order.qty) if order.qty is not None else None,
+                    },
+                )
+            except Exception as e:
+                logger.error(f"Failed to replace order {order_id}: {e}")
                 return MCPResponse(success=False, error=str(e))
 
         @self.app.tool()
