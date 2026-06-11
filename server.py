@@ -953,7 +953,13 @@ class AlpacaMCPServer:
                     success=False,
                     error="replace_order: provide at least one of stop_price/limit_price/qty",
                 )
+            if qty is not None and qty != int(qty):
+                return MCPResponse(
+                    success=False,
+                    error="replace_order: qty must be a whole number (fractional shares not supported for replacements)",
+                )
             try:
+                logger.info(f"Replacing order {order_id}: stop_price={stop_price}, limit_price={limit_price}, qty={qty}")
                 req = ReplaceOrderRequest(
                     stop_price=stop_price,
                     limit_price=limit_price,

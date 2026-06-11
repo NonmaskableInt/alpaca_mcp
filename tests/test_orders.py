@@ -625,6 +625,7 @@ class TestReplaceOrder:
         result = await replace_order(order_id="ord-abc")
         assert result.success is False
         mock_trading_client.replace_order_by_id.assert_not_called()
+        assert "stop_price" in result.error
 
     async def test_replace_order_surfaces_api_error(self, server, mock_trading_client):
         mock_trading_client.replace_order_by_id.side_effect = Exception("422 cannot replace")
@@ -632,3 +633,33 @@ class TestReplaceOrder:
         result = await replace_order(order_id="ord-abc", stop_price=170.0)
         assert result.success is False
         assert "cannot replace" in result.error
+
+    async def test_replace_order_limit_price(self, server, mock_trading_client, mock_order):
+        mock_order.stop_price = None
+        mock_order.limit_price = "185.00"
+        mock_order.status = MagicMock(value="accepted")
+        mock_trading_client.replace_order_by_id.return_value = mock_order
+        replace_order = server.app._tool_manager._tools["replace_order"].fn
+        result = await replace_order(order_id="ord-abc", limit_price=185.0)
+        assert result.success is True
+        args, _ = mock_trading_client.replace_order_by_id.call_args
+        assert args[1].limit_price == 185.0
+        assert result.data["limit_price"] == 185.0
+
+    async def test_replace_order_qty_replacement(self, server, mock_trading_client, mock_order):
+        mock_order.qty = "5"
+        mock_order.status = MagicMock(value="accepted")
+        mock_trading_client.replace_order_by_id.return_value = mock_order
+        replace_order = server.app._tool_manager._tools["replace_order"].fn
+        result = await replace_order(order_id="ord-abc", qty=5)
+        assert result.success is True
+        args, _ = mock_trading_client.replace_order_by_id.call_args
+        assert args[1].qty == 5
+        assert result.data["qty"] == 5.0
+
+    async def test_replace_order_fractional_qty_rejected(self, server, mock_trading_client):
+        replace_order = server.app._tool_manager._tools["replace_order"].fn
+        result = await replace_order(order_id="ord-abc", qty=10.9)
+        assert result.success is False
+        assert "whole number" in result.error
+        mock_trading_client.replace_order_by_id.assert_not_called()
