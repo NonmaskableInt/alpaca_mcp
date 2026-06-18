@@ -407,6 +407,43 @@ class TestClosePosition:
         call_args = mock_trading_client.close_position.call_args
         assert call_args[0][0] == "AAPL"
 
+    async def test_close_position_qty_passes_close_position_request(
+        self, server, mock_trading_client, mock_order
+    ):
+        """Regression: alpaca-py close_position requires a ClosePositionRequest for
+        close_options, NOT a dict. A dict raised "'dict' object has no attribute
+        'to_request_fields'" at runtime (the MagicMock hid it), so every flatten/
+        exit crashed. The SDK must receive a typed ClosePositionRequest."""
+        from alpaca.trading.requests import ClosePositionRequest
+
+        mock_trading_client.close_position.return_value = mock_order
+        tools = server.app._tool_manager._tools
+        close_position = tools["close_position"].fn
+
+        result = await close_position(symbol="AAPL", qty=50)
+
+        assert result.success is True
+        close_opts = mock_trading_client.close_position.call_args.kwargs.get("close_options")
+        assert isinstance(close_opts, ClosePositionRequest)
+        assert float(close_opts.qty) == 50.0
+
+    async def test_close_position_percentage_passes_close_position_request(
+        self, server, mock_trading_client, mock_order
+    ):
+        """Percentage close must also pass a typed ClosePositionRequest."""
+        from alpaca.trading.requests import ClosePositionRequest
+
+        mock_trading_client.close_position.return_value = mock_order
+        tools = server.app._tool_manager._tools
+        close_position = tools["close_position"].fn
+
+        result = await close_position(symbol="AAPL", percentage=50)
+
+        assert result.success is True
+        close_opts = mock_trading_client.close_position.call_args.kwargs.get("close_options")
+        assert isinstance(close_opts, ClosePositionRequest)
+        assert float(close_opts.percentage) == 50.0
+
     async def test_close_position_partial_percentage(self, server, mock_trading_client, mock_order):
         """Test closing partial position by percentage."""
         mock_trading_client.close_position.return_value = mock_order

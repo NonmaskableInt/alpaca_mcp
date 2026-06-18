@@ -25,6 +25,7 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
     TrailingStopOrderRequest,
     ReplaceOrderRequest,
+    ClosePositionRequest,
     GetOrdersRequest,
     GetPortfolioHistoryRequest,
     GetOptionContractsRequest,
@@ -1007,14 +1008,16 @@ class AlpacaMCPServer:
             try:
                 logger.info(f"Closing position: {symbol} qty={qty} percentage={percentage}")
 
-                # Build close position parameters
-                close_options = {}
+                # Build close position parameters. alpaca-py requires a typed
+                # ClosePositionRequest here — passing a plain dict raises
+                # "'dict' object has no attribute 'to_request_fields'" at runtime.
+                close_options = None
                 if qty is not None:
-                    close_options["qty"] = str(qty)
+                    close_options = ClosePositionRequest(qty=str(qty))
                 elif percentage is not None:
-                    close_options["percentage"] = str(percentage)
+                    close_options = ClosePositionRequest(percentage=str(percentage))
 
-                result = self.trading_client.close_position(symbol, close_options=close_options if close_options else None)
+                result = self.trading_client.close_position(symbol, close_options=close_options)
                 logger.info(f"Position closed: {symbol}")
 
                 return MCPResponse(
